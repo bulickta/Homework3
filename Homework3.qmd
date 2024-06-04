@@ -1,0 +1,205 @@
+---
+title: "Entering the Tidyverse"
+format: html
+editor: visual
+---
+
+Installing and loading all needed libraries for this assignment
+
+```{r}
+#install.packages("tidyverse")
+#install.packages("readxl")
+#install.packages("DBI")
+#install.packages("RSQLite")
+library(tidyverse)
+library(DBI)
+library(RSQLite)
+library(readxl)
+library(dplyr)
+```
+
+## Concepts
+
+1.  If your working directory is myfolder/homework/, what relative path would you specify to get the file located at myfolder/MyData.csv?
+
+> The path you would use is "../MyData.csv"
+
+2.  What are the major benefits of using R projects?
+
+> R Projects are helpful to simplify managing a working directory, and it makes using version control/sharing R projects easier as all the necessary files can be saved and transferred together with very few steps, so if everything is well defined using relative paths a program should run smoothly on any device that downloads that project.
+
+3.  What is git and what is github?
+
+> Git is a widely used open source version control software that simplifies the process of monitoring and documenting changes to files. Github is an online service that runs Git in a cloud setting that enables easier collaboration using Git over the internet.
+
+4.  What are the two main differences between a tibble and a data.frame?
+
+> Tibbles will automatically only print to fit the page as they assume a dataset is large, and subsetting a tibble will result in a new tibble, as opposed to how subsetting a data frame may create a vector.
+
+5.  Rewrite the following nested function call using baseR’s chaining operator:
+
+```{r}
+arrange(filter(select(as_tibble(iris), starts_with("Petal"), Species), Petal.Length < 1.55), Species)
+```
+
+> Another way of achieving the same result as the function above is:
+
+```{r}
+iris[(iris$Petal.Length < 1.55),c(3,4,5)]
+```
+
+6.  What is meant by long format data and wide format data? Which do we generally prefer for statistical analysis?
+
+> Long format data is data where each row corresponds to one observation and each column corresponds to one variable, versus wide data format is data where more than one observation may be present in a given row, generally because some sort of additional data is being encoded in the column labels. Generally, long format data is preferred as it is easier to manipulate.
+
+## Reading Delimited Data
+
+### Glass Data
+
+For the glass data set, first we read in our data, specifying that it is delimited by commas and adding column names via the read_delim() function.
+```{r}
+glass <- read_delim("https://www4.stat.ncsu.edu/~online/datasets/glass.data",delim=",",col_names=c("Id","RI","Na","Mg","Al","Si","K","Ca","Ba","Fe","Type_of_glass"))
+glass
+```
+
+Next we mutate the type column to be corresponding text values, and we filter for iron \< 0.2 in glass used for tableware or headlamps.
+```{r}
+glass |> 
+  mutate(Type_of_glass = ifelse(Type_of_glass==1,"building_windows_float_processed",ifelse(Type_of_glass==2,"building_windows_non_float_processed",ifelse(Type_of_glass==3,"vehicle_windows_float_processed",ifelse(Type_of_glass==4,"vehicle_windows_non_float_processed",ifelse(Type_of_glass==5,"containers",ifelse(Type_of_glass==6,"tableware",ifelse(Type_of_glass==7,"headlamps","ERROR")))))))) |>
+  filter(Fe < 0.2,Type_of_glass == c("tableware","headlamps"))
+```
+
+### Yeast Data
+
+Read in the yeast data set and label columns.
+```{r}
+yeast <- read_delim("https://www4.stat.ncsu.edu/~online/datasets/yeast.data",delim="  ",col_names=c("seq_name","mcg","gvh","alm","mit","erl","pox","vac","nuc","class"))
+yeast
+```
+
+Adjust the data as needed.
+```{r}
+yeast |> 
+  select(mcg:vac,class) |>
+  group_by(class) |>
+  mutate(across(where(is.numeric),list(mean=mean,median=median),.names = "{.col}.{.fn}"))
+```
+
+## Combining Excel and Delimited Data
+
+Read in our white wine data, rename the variables, and add a column indicating wine type.
+```{r}
+white_wine <- read_excel("white-wine.xlsx",sheet = excel_sheets("white-wine.xlsx")[1])
+white_wine
+
+white_wine_vars <- read_excel("white-wine.xlsx",sheet = excel_sheets("white-wine.xlsx")[2])
+colnames(white_wine) <- white_wine_vars$Variables
+white_wine2 <- white_wine |> 
+  mutate(type = "White")
+```
+
+Read in our red wine data, rename the variables, and add a column indicating wine type.
+```{r}
+red_wine <- read_delim("https://www4.stat.ncsu.edu/~online/datasets/red-wine.csv", delim = ";")
+colnames(red_wine) <- white_wine_vars$Variables
+red_wine2 <- red_wine |> 
+  mutate(type = "Red")
+```
+
+Combine the wine data sets together as perform our needed data transformations.
+```{r}
+wine <- bind_rows(white_wine2, red_wine2)
+wine |>
+  filter(quality>6.5,alcohol<132) |>
+  arrange(desc(quality)) |>
+  select(contains("acid"),alcohol,type,quality) |>
+  group_by(quality) |>
+  mutate(across(alcohol,list(mean=mean,sd=sd),.names = "{.col}.{.fn}"))
+```
+
+## Database Practice
+
+Connect to the database.
+```{r}
+con <- dbConnect(RSQLite::SQLite(), "lahman.db")
+```
+
+Show list of tables and the Teams data from 2015.
+```{r}
+dbListTables(con)
+tbl(con,"Teams") |>
+  filter(yearID == 2015)
+```
+
+Show the Teams data using SQL.
+```{r}
+tbl(con,sql(
+  "SELECT * 
+  FROM `Teams`
+  WHERE (`yearID` = 2015)")
+)
+```
+
+Find the list of players who were inducted into the Hall of Fame.
+```{r}
+tbl(con,sql(
+  "SELECT `playerID`,`yearID`,`category`,`Inducted`
+  FROM HallOfFame")) |>
+  filter(Inducted == "Y") |>
+  select(playerID,yearID,category)
+```
+
+Combine with the list of first and last names.
+```{r}
+tbl(con,sql(
+  "SELECT HallOfFame.playerID,HallOfFame.yearID,HallOfFame.category,HallOfFame.Inducted,People.nameFirst,People.nameLast
+  FROM HallOfFame
+  INNER JOIN People on HallOfFame.playerID = People.playerID")) |>
+  filter(Inducted == "Y") |>
+  select(playerID,yearID,category,nameFirst,nameLast)
+```
+
+Collect the list of managers and calculate W/L records.
+```{r}
+tbl(con, sql(
+  "SELECT `playerID`, `G`, `W`, `L`
+  FROM Managers")) |>
+  group_by(playerID) |>
+  summarize(G_managed = sum(G, na.rm = TRUE),
+  Total_W = sum(W, na.rm = TRUE),
+  Total_L = sum(L, na.rm = TRUE)) |>
+  collect() |>
+  mutate(Total_W_G_managed = Total_W/(Total_W+Total_L)) |>
+  arrange(desc(Total_W_G_managed))
+```
+
+Combine Hall of Fame-rs and Managers to determine which successful players were also successful managers.
+```{r}
+a <- as_tibble(tbl(con,sql(
+  "SELECT HallOfFame.playerID,HallOfFame.yearID,HallOfFame.category,HallOfFame.Inducted,People.nameFirst,People.nameLast
+  FROM HallOfFame
+  INNER JOIN People on HallOfFame.playerID = People.playerID"))) |>
+  filter(inducted == "Y") |>
+  select(playerID,yearID,category,nameFirst,nameLast)
+
+b <- as_tibble(tbl(con, sql(
+  "SELECT `playerID`, `G`, `W`, `L`
+  FROM Managers"))) |>
+  group_by(playerID) |>
+  summarize(G_managed = sum(G, na.rm = TRUE),
+  Total_W = sum(W, na.rm = TRUE),
+  Total_L = sum(L, na.rm = TRUE)) |>
+  collect() |>
+  mutate(Total_W_G_managed = Total_W/(Total_W+Total_L))
+
+BestPlayerManagers <- a |>
+  inner_join(b, by=join_by(playerID)) |>
+  arrange(desc(Total_W_G_managed))
+
+BestPlayerManagers
+```
+
+Disconnect from the Database
+```{r}
+dbDisconnect(con)
+```
